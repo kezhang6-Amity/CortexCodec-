@@ -1,0 +1,138 @@
+import os
+import numpy as np
+from scipy.io import loadmat, savemat
+from scipy.stats import kurtosis, skew
+from scipy.signal import butter, filtfilt
+
+# Bandpass filtering function (equivalent to Proprocess_filter)
+def preprocess_filter(signal, fs, low_para, high_para):
+    """
+    Bandpass filter EEG signal
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        shape (channels, samples)
+    fs : int
+        sampling frequency
+    low_para : list [low_cut, high_cut]
+        low frequency band
+    high_para : list [low_cut, high_cut]
+        high frequency band
+
+    Returns
+    -------
+    filtered_signal : np.ndarray
+    """
+
+    # Combine into a single bandpass range
+    lowcut = low_para[0]
+    highcut = high_para[1]
+
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+
+    b, a = butter(4, [low, high], btype='band')
+
+    # Apply filter channel-wise
+    filtered = filtfilt(b, a, signal, axis=1)
+
+    return filtered
+
+
+# ------------------------------------------------------------
+# Time domain feature extraction
+# ------------------------------------------------------------
+def extract_time_domain_features(signal):
+    """
+    Extract time domain features from EEG signal
+
+    Features per channel:
+    mean, std, max, min, kurtosis, skewness
+    """
+
+    num_channels, num_samples = signal.shape
+
+    # Initialize feature matrix
+    features = np.zeros((num_channels, 6))
+
+    for ch in range(num_channels):
+        data = signal[ch, :]
+
+        features[ch, 0] = np.mean(data)              # Mean
+        features[ch, 1] = np.std(data)               # Standard deviation
+        features[ch, 2] = np.max(data)               # Max
+        features[ch, 3] = np.min(data)               # Min
+        features[ch, 4] = kurtosis(data, fisher=False)  # Kurtosis (match MATLAB)
+        features[ch, 5] = skew(data)                 # Skewness
+
+    return features
+
+
+# ------------------------------------------------------------
+# Example: load single file
+# ------------------------------------------------------------
+file_path = ''
+data = loadmat(file_path)
+
+# MATLAB struct field -> Python dict key
+EEG_signal_1 = data['cz_eeg1']
+
+
+# Extract features
+features = extract_time_domain_features(EEG_signal_1)
+
+print("Time domain features (rows = channels, cols = features):")
+print(features)
+
+
+# ------------------------------------------------------------
+# Batch processing all .mat files
+# ------------------------------------------------------------
+
+folder_path = ''
+output_folder = ''
+
+# Create output folder if not exists
+os.makedirs(output_folder, exist_ok=True)
+
+mat_files = [f for f in os.listdir(folder_path) if f.endswith('.mat')]
+
+for i, file_name in enumerate(mat_files, start=1):
+
+    file_path = os.path.join(folder_path, file_name)
+
+    # Load data
+    data = loadmat(file_path)
+
+    # Get all EEG channel variables (skip meta keys)
+    field_names = [k for k in data.keys() if not k.startswith('__')]
+
+    # Iterate through each channel
+    for j, field in enumerate(field_names, start=1):
+
+        EEG_signal = data[field]
+
+        # Filtering parameters
+        fs_down = 500
+        filter_low_para = [0.5, 30]
+        filter_high_para = [1, 35]
+
+        EEG_signal_filtered = preprocess_filter(
+            EEG_signal,
+            fs_down,
+            filter_low_para,
+            filter_high_para
+        )
+
+        # Extract features
+        features = extract_time_domain_features(EEG_signal_filtered)
+
+        # Save features
+        output_filename = f'features_file{i}_channel{j}.mat'
+        output_filepath = os.path.join(output_folder, output_filename)
+
+        savemat(output_filepath, {'features': features})
+
+print("All files processed successfully.")
